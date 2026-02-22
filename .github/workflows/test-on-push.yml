@@ -41,20 +41,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r src/requirements-dev.txt
 
-      # Run pytest with JUnit XML (for Actions test summary) and coverage; capture log for job summary.
+      # Run pytest with coverage and capture log so the job summary shows results and coverage.
       - name: Run tests with coverage
         run: |
-          PYTHONPATH=src pytest src/tests/ -v --cov=app --cov-report=term-missing --junitxml=junit.xml 2>&1 | tee test.log
+          PYTHONPATH=src pytest src/tests/ -v --cov=app --cov-report=term-missing 2>&1 | tee test.log
 
-      # Expose test results in the run summary (Tests section) and job summary (coverage).
-      - name: Publish test results
-        uses: EnricoBaumann/action-publish-test-results@v1
-        if: always()
-        with:
-          files: junit.xml
-          name: pytest results
-
-      - name: Add coverage to job summary
+      - name: Add test results and coverage to job summary
         run: |
           echo "## Pytest & coverage" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
