@@ -12,11 +12,12 @@ services:
     # Persist SQLite DB and any TFTP assets under /data.
     volumes:
       - pxe-data:/data
-    # Required: kernel, initrd, autoinstall, and base URL. Optional vars below; uncomment to override.
+    # Required: kernel, initrd, autoinstall base URL, and base URL. Optional vars below; uncomment to override.
+    # Autoinstall: installer fetches {autoinstall_url}/user-data and {autoinstall_url}/meta-data (nocloud-net).
     environment:
       PXE_UBUNTU_KERNEL_URL: http://image-host/ubuntu/vmlinuz
       PXE_UBUNTU_INITRD_URL: http://image-host/ubuntu/initrd
-      PXE_AUTOINSTALL_URL: http://image-host/autoinstall.yaml
+      PXE_AUTOINSTALL_URL: http://image-host/autoinstall/${mac}
       PXE_BASE_URL: http://pxe-pilot:8000
       # DATABASE_PATH: pxe.db
       # ADMIN_API_KEY: your-secret-key
