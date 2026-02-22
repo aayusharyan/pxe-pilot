@@ -1,0 +1,271 @@
+# Automated Release Workflow with Version Management
+#
+# This workflow handles the complete release process including version bumping,
+# Docker image building, and GitHub release creation. It follows semantic versioning
+# (MAJOR.MINOR.PATCH) and automatically updates version numbers throughout the codebase.
+#
+# Trigger: Manual dispatch with choice of major or minor version bump
+# Versioning: Git tags are the source of truth (defaults to v0.0.0 for first release)
+# Tags Created: Four Docker tags per release - latest, X.Y.Z, X.Y, and X
+#
+# Process Flow:
+# 1. Calculate new version from latest Git tag
+# 2. Update version in Python package and Dockerfile
+# 3. Commit and push version changes to main branch
+# 4. Create and push Git tag for the new version
+# 5. Build Docker image with updated version embedded
+# 6. Push images to GitHub Container Registry with multiple tags
+# 7. Generate changelog from Git commits
+# 8. Create GitHub release with auto-generated changelog
+#
+# Output: Stable Docker images tagged as 'latest' and versioned for production use
+
+name: Create Release
+
+# Manual workflow trigger allowing selection of version bump type
+# Minor bump: 1.0.0 → 1.1.0 (for new features, backward compatible)
+# Major bump: 1.0.0 → 2.0.0 (for breaking changes)
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - minor
+          - major
+        default: minor
+
+# Global environment variables used across all steps
+# REGISTRY: Container registry URL (GitHub Container Registry)
+# IMAGE_NAME: Automatically resolves to owner/repository format
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    # Required permissions for this job to function
+    # contents:write - Needed to create commits, tags, and releases
+    # packages:write - Needed to push Docker images to GitHub Container Registry
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      # Clone the repository with full Git history
+      # fetch-depth: 0 ensures all tags are available for version calculation
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Calculate the next version number based on existing Git tags
+      # Reads all tags matching v*.*.* pattern, sorts them, and increments based on user choice
+      # Defaults to v0.0.0 if no tags exist (first release becomes v0.1.0 or v1.0.0)
+      # Minor bump: Increments middle number, resets patch (1.0.0 → 1.1.0)
+      # Major bump: Increments first number, resets minor and patch (1.1.0 → 2.0.0)
+      - name: Calculate new version
+        id: version
+        run: |
+          # Get the latest tag, default to v0.0.0 if no tags exist
+          LATEST_TAG=$(git tag -l "v*.*.*" | sort -V | tail -n 1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
+
+          echo "Latest tag: $LATEST_TAG"
+
+          # Remove 'v' prefix and split version into components
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          # Bump version based on user input
+          if [ "${{ github.event.inputs.version_bump }}" == "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          else
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          fi
+
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "New version: $NEW_VERSION"
+
+          # Export variables for use in subsequent steps
+          # Git tags keep 'v' prefix (v1.2.3) but Docker tags don't (1.2.3, 1.2, 1)
+          echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "version_number=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
+          echo "major_minor=${MAJOR}.${MINOR}" >> $GITHUB_OUTPUT
+          echo "major=${MAJOR}" >> $GITHUB_OUTPUT
+
+      # Update version strings in the codebase to match the new release version
+      # Updates both Python package version and Docker image label
+      # This ensures the version is embedded in the code and visible at runtime
+      - name: Update version in codebase
+        run: |
+          # Update __version__ in src/__init__.py
+          sed -i "s/__version__ = '.*'/__version__ = '${{ steps.version.outputs.version_number }}'/" src/__init__.py
+
+          # Update LABEL version in docker/Dockerfile
+          sed -i 's/LABEL version=".*"/LABEL version="${{ steps.version.outputs.version_number }}"/' docker/Dockerfile
+
+          # Verify the changes were applied correctly
+          echo "Updated version in src/__init__.py:"
+          grep "__version__" src/__init__.py
+          echo ""
+          echo "Updated version in docker/Dockerfile:"
+          grep 'LABEL version=' docker/Dockerfile
+
+      # Commit the version bump changes and push to main branch
+      # Uses github-actions bot identity for automated commits
+      # This commit will be tagged in the next step
+      - name: Commit and push version bump
+        run: |
+          git config user.name "Aayush Sinha"
+          git config user.email "hello@yush.dev"
+          git add src/__init__.py docker/Dockerfile
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version_number }}"
+          git push origin main
+
+      # Create an annotated Git tag pointing to the version bump commit
+      # The tag serves as the release marker and version source of truth
+      # Annotated tags include metadata (tagger, date, message) unlike lightweight tags
+      - name: Create and push tag
+        run: |
+          git config user.name "Aayush Sinha"
+          git config user.email "hello@yush.dev"
+          git tag -a ${{ steps.version.outputs.new_version }} -m "Release ${{ steps.version.outputs.new_version }}"
+          git push origin ${{ steps.version.outputs.new_version }}
+
+      # Configure Docker Buildx for advanced build capabilities
+      # Buildx enables multi-platform builds, build caching, and improved performance
+      # Required for GitHub Actions cache integration (type=gha)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticate with GitHub Container Registry using the auto-generated GITHUB_TOKEN
+      # No manual token setup required - GitHub provides this automatically
+      # The token is scoped to this repository and expires after the workflow run
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generate Docker image tags and OCI-compliant labels
+      # Creates multiple tags following Docker Hub conventions (no 'v' prefix):
+      # - latest: Always points to newest stable release
+      # - 1.2.3: Full semantic version (immutable)
+      # - 1.2: Rolling tag for latest patch of minor version
+      # - 1: Rolling tag for latest minor of major version
+      # Git tags keep 'v' prefix (v1.2.3) but Docker tags don't
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.version.outputs.version_number }}
+            type=raw,value=${{ steps.version.outputs.major_minor }}
+            type=raw,value=${{ steps.version.outputs.major }}
+
+      # Build Docker image and push to GitHub Container Registry
+      # Uses GitHub Actions cache to speed up repeated builds by reusing layers
+      # The image includes the updated version from previous steps
+      # mode=max caches all intermediate layers for maximum performance gain
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Generate changelog from Git commits between releases
+      # Retrieves all non-merge commits since the previous release tag
+      # Formats each commit as a bullet point with message and short hash
+      # Includes Docker pull commands and comparison link for the release notes
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the second-to-last tag to determine the commit range
+          LATEST_TAG=$(git tag -l "v*.*.*" | sort -V | tail -n 2 | head -n 1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            # First release: include all commits
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            # Subsequent releases: commits between last two tags
+            COMMITS=$(git log ${LATEST_TAG}..${{ steps.version.outputs.new_version }} --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Build changelog with commits and Docker pull instructions
+          cat > RELEASE_NOTES.md <<EOF
+          ## What's Changed
+
+          ${COMMITS}
+
+          ## Docker Images
+
+          \`\`\`bash
+          # Stable latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+          # Specific version (immutable)
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+
+          # Rolling tags (auto-update to latest patch/minor)
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major_minor }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}
+          \`\`\`
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${LATEST_TAG}...${{ steps.version.outputs.new_version }}
+          EOF
+
+      # Create a GitHub release with the generated changelog
+      # The release is linked to the Git tag created earlier
+      # Not marked as draft or prerelease - immediately visible to users
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.new_version }}
+          name: Release ${{ steps.version.outputs.new_version }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Display release information in the GitHub Actions summary page
+      # Provides a quick overview of the release with Docker pull commands
+      # Visible when viewing the workflow run in GitHub's web interface
+      - name: Release summary
+        run: |
+          echo "### Release Created :tada:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.version.outputs.new_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Type:** \`${{ github.event.inputs.version_bump }}\` version bump" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Images:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\` (stable)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}\` (immutable)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major_minor }}\` (rolling)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}\` (rolling)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View Release](https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.new_version }})" >> $GITHUB_STEP_SUMMARY
