@@ -41,9 +41,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r src/requirements-dev.txt
 
-      # Run pytest with coverage; report in terminal (optional: add --cov-fail-under=80 to enforce minimum).
+      # Run pytest with JUnit XML (for Actions test summary) and coverage; capture log for job summary.
       - name: Run tests with coverage
-        run: PYTHONPATH=src pytest src/tests/ -v --cov=app --cov-report=term-missing
+        run: |
+          PYTHONPATH=src pytest src/tests/ -v --cov=app --cov-report=term-missing --junitxml=junit.xml 2>&1 | tee test.log
+
+      # Expose test results in the run summary (Tests section) and job summary (coverage).
+      - name: Publish test results
+        uses: EnricoBaumann/action-publish-test-results@v1
+        if: always()
+        with:
+          files: junit.xml
+          name: pytest results
+
+      - name: Add coverage to job summary
+        run: |
+          echo "## Pytest & coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -n 80 test.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   # Builds the Docker image, loads it, runs the container with TFTP enabled, and verifies
   # TFTP by downloading undionly.kpxe and boot.ipxe with a TFTP client. Ensures TFTP (dnsmasq) works.
