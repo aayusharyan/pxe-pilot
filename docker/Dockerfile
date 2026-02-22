@@ -30,9 +30,8 @@ RUN chmod +x /entrypoint.sh
 RUN mkdir -p /tftpboot
 COPY --from=ipxe /ipxe/src/bin/undionly.kpxe /tftpboot/undionly.kpxe
 
-# Defaults; overridable via -e or .env. DATABASE_PATH default keeps container DB in a mountable path.
+# Defaults; overridable via -e or compose. App default for DATABASE_PATH is pxe.db (see config.py).
 ENV PORT=8000
-ENV DATABASE_PATH=/data/pxe.db
 
 EXPOSE 8000 69/udp
 
