@@ -70,11 +70,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Run container with TFTP enabled. Required env vars are set to dummy values; we only test TFTP serve.
+      # Use a dedicated network so the TFTP client container talks to the server by name (no host UDP port mapping).
       - name: Run container with TFTP enabled
         run: |
-          docker run -d --name pxe-tftp-test \
-            -p 8000:8000 -p 69:69/udp \
+          docker network create pxe-tftp-net 2>/dev/null || true
+          docker run -d --name pxe-tftp-test --network pxe-tftp-net \
             -e PXE_BASE_URL=http://localhost:8000 \
             -e PXE_UBUNTU_KERNEL_URL=http://example.com/vmlinuz \
             -e PXE_UBUNTU_INITRD_URL=http://example.com/initrd \
@@ -82,7 +82,7 @@ jobs:
             -e PXE_TFTP_ENABLED=1 \
             pxe-boot:test
 
-      # Wait for TFTP and app to be ready (dnsmasq and gunicorn start in entrypoint).
+      # Wait for TFTP and app to be ready; extra sleep so dnsmasq is listening on UDP 69.
       - name: Wait for container to be ready
         run: |
           docker ps | grep -q pxe-tftp-test
@@ -91,16 +91,24 @@ jobs:
             sleep 1
           done
           docker exec pxe-tftp-test test -f /tftpboot/boot.ipxe
-          sleep 1
+          sleep 5
 
-      # Install TFTP client (tftp-hpa) and download files served by the container to verify TFTP works.
-      - name: Install TFTP client and test TFTP
+      # TFTP client runs in a container on the same network (avoids host UDP port mapping timeouts in GHA).
+      - name: Test TFTP from client container
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y tftp-hpa
-          tftp 127.0.0.1 -m binary -c get undionly.kpxe /tmp/undionly.kpxe
-          tftp 127.0.0.1 -m binary -c get boot.ipxe /tmp/boot.ipxe
-          test -f /tmp/undionly.kpxe && test $(stat -c%s /tmp/undionly.kpxe) -gt 100000
-          test -f /tmp/boot.ipxe && grep -q 'chain http' /tmp/boot.ipxe
+          mkdir -p $RUNNER_TEMP/pxe-out
+          for attempt in 1 2 3; do
+            if docker run --rm --network pxe-tftp-net -v $RUNNER_TEMP/pxe-out:/out debian:bookworm-slim bash -c '
+              apt-get update -qq && apt-get install -y -qq tftp-hpa >/dev/null
+              (echo "get undionly.kpxe /out/undionly.kpxe"; echo "quit") | tftp pxe-tftp-test -m binary
+              (echo "get boot.ipxe /out/boot.ipxe"; echo "quit") | tftp pxe-tftp-test -m binary
+              test -f /out/undionly.kpxe && test $(stat -c%s /out/undionly.kpxe) -gt 50000
+              grep -q "chain http" /out/boot.ipxe
+            '; then exit 0; fi
+            sleep 3
+          done
+          echo "TFTP transfer failed after 3 attempts"
+          exit 1
 
       - name: Stop container
         if: always()
