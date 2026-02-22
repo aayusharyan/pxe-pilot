@@ -18,7 +18,7 @@ services:
       PXE_UBUNTU_INITRD_URL: http://image-host/ubuntu/initrd
       PXE_AUTOINSTALL_URL: http://image-host/autoinstall.yaml
       PXE_BASE_URL: http://pxe-pilot:8000
-      # DATABASE_PATH: /pxe.db
+      # DATABASE_PATH: pxe.db
       # ADMIN_API_KEY: your-secret-key
       # PXE_TFTP_ENABLED: "0"
     restart: unless-stopped
