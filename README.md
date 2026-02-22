@@ -1,5 +1,7 @@
 # PXE Pilot
 
+![PXE Pilot header](.github/header.png)
+
 **Steer your homelab's PXE boot.**
 
 Minimal API that decides whether a machine reinstalls (via PXE) or boots from local disk. iPXE calls `GET /boot?mac=...` and receives a plain-text iPXE script. Supports any Linux flavor; you supply kernel, initrd, and autoinstall URLs from your own image host.
