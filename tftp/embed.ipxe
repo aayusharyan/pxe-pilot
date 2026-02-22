@@ -1,0 +1,6 @@
+#!ipxe
+# Stage 1 (build time): baked into undionly.kpxe. Does not reference the HTTP app.
+# Client has just loaded this binary via TFTP; we only tell it to TFTP-load boot.ipxe from the same server.
+# boot.ipxe is generated at container startup (entrypoint.sh) and contains the HTTP /chain URL.
+# ${next-server} is set by DHCP option 66 (router "TFTP Server" / siaddr); same host as this container.
+chain tftp://${next-server}/boot.ipxe
