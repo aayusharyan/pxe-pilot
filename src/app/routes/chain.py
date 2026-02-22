@@ -1,6 +1,7 @@
 """
 /chain route: bootstrap iPXE script that chains to /boot?mac=${mac} with
-local-disk fallback. Point DHCP boot filename here when you need chaining.
+local-disk fallback. Set DHCP boot filename to this URL, e.g. http://pxe-pilot/chain or
+http://pxe-pilot:8000/chain .
 """
 
 from flask import Response
@@ -15,12 +16,13 @@ def ipxe_script_chain_with_fallback(boot_base_url: str) -> str:
     boot when the server is down.
     """
     boot_url = boot_base_url.rstrip("/") + "/boot"
+    # Fallback: exit so BIOS/firmware continues with next device in boot order.
     return (
         "#!ipxe\n"
         f"chain {boot_url}?mac=${{mac}} || goto fallback\n"
         ":fallback\n"
-        "echo Boot server unavailable, booting local disk\n"
-        "sanboot --no-describe --drive 0x80\n"
+        "echo Boot server unavailable, continuing with next boot device configured in BIOS\n"
+        "exit\n"
     )
 
 
