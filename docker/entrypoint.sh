@@ -28,4 +28,5 @@ if [ -n "$PXE_TFTP_ENABLED" ]; then
 fi
 
 # Start the Flask app. Single worker is enough for typical homelab use; app:app is the WSGI callable.
-exec gunicorn -b 0.0.0.0:8000 -w 1 app:app
+# PORT is optional (default 8000); see README Environment variables.
+exec gunicorn -b "0.0.0.0:${PORT:-8000}" -w 1 app:app
