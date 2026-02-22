@@ -19,7 +19,7 @@ fi
 # If TFTP is enabled, run the two-stage TFTP setup before starting the app.
 if [ -n "$PXE_TFTP_ENABLED" ]; then
   mkdir -p /tftpboot
-  # Strip trailing slash so the chain URL is clean (e.g. http://host:8000/chain).
+  # Strip trailing slash so the chain URL is clean (e.g. http://pxe-pilot/chain).
   base="${PXE_BASE_URL%/}"
   # boot.ipxe is what undionly.kpxe (embed.ipxe) chain-loads via TFTP. It tells the client to fetch the real script from this app over HTTP.
   printf '#!ipxe\nchain %s/chain\n' "$base" > /tftpboot/boot.ipxe
