@@ -1,0 +1,107 @@
+# GitHub Actions workflow that runs tests and validates the Docker build on every push
+# and pull request. Ensures the codebase stays green before merge; PRs can use these
+# jobs as required status checks.
+#
+# Trigger: Any push or pull_request to any branch; also manually via workflow_dispatch.
+# Jobs: pytest (Python unit tests), Docker build + TFTP test (build image, run container, verify TFTP serves files).
+#
+# Process: Checkout → run pytest with dev dependencies; in parallel, build Docker image,
+# load it, run container with TFTP enabled, use tftp client to GET undionly.kpxe and boot.ipxe and verify. No push.
+
+name: Test on push
+
+# Runs on every push, every pull request, or when triggered manually from the Actions tab.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Runs the Python test suite with pytest. Uses the same Python version and
+  # dev dependencies as defined in the repo (requirements-dev.txt).
+  test-python:
+    name: pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Install the Python version used by the project and cache pip dependencies
+      # to speed up subsequent runs. cache-dependency-path pins cache to dev deps.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: src/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements-dev.txt
+
+      # Run pytest with coverage; report in terminal (optional: add --cov-fail-under=80 to enforce minimum).
+      - name: Run tests with coverage
+        run: PYTHONPATH=src pytest src/tests/ -v --cov=app --cov-report=term-missing
+
+  # Builds the Docker image, loads it, runs the container with TFTP enabled, and verifies
+  # TFTP by downloading undionly.kpxe and boot.ipxe with a TFTP client. Ensures TFTP (dnsmasq) works.
+  build-docker:
+    name: Docker build and TFTP test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and load the image so we can run the container for TFTP testing. No push.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          load: true
+          tags: pxe-boot:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Run container with TFTP enabled. Required env vars are set to dummy values; we only test TFTP serve.
+      - name: Run container with TFTP enabled
+        run: |
+          docker run -d --name pxe-tftp-test \
+            -p 8000:8000 -p 69:69/udp \
+            -e PXE_BASE_URL=http://localhost:8000 \
+            -e PXE_UBUNTU_KERNEL_URL=http://example.com/vmlinuz \
+            -e PXE_UBUNTU_INITRD_URL=http://example.com/initrd \
+            -e PXE_AUTOINSTALL_URL=http://example.com/autoinstall.yaml \
+            -e PXE_TFTP_ENABLED=1 \
+            pxe-boot:test
+
+      # Wait for TFTP and app to be ready (dnsmasq and gunicorn start in entrypoint).
+      - name: Wait for container to be ready
+        run: |
+          docker ps | grep -q pxe-tftp-test
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if docker exec pxe-tftp-test test -f /tftpboot/boot.ipxe 2>/dev/null; then break; fi
+            sleep 1
+          done
+          docker exec pxe-tftp-test test -f /tftpboot/boot.ipxe
+          sleep 1
+
+      # Install TFTP client (tftp-hpa) and download files served by the container to verify TFTP works.
+      - name: Install TFTP client and test TFTP
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y tftp-hpa
+          tftp 127.0.0.1 -m binary -c get undionly.kpxe /tmp/undionly.kpxe
+          tftp 127.0.0.1 -m binary -c get boot.ipxe /tmp/boot.ipxe
+          test -f /tmp/undionly.kpxe && test $(stat -c%s /tmp/undionly.kpxe) -gt 100000
+          test -f /tmp/boot.ipxe && grep -q 'chain http' /tmp/boot.ipxe
+
+      - name: Stop container
+        if: always()
+        run: docker stop pxe-tftp-test 2>/dev/null || true
