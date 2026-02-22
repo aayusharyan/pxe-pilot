@@ -1,12 +1,15 @@
 """
-Pytest configuration and shared fixtures. Sets required env vars before any app
-import so config does not exit; provides test client and clean DB per test.
+Pytest configuration and shared fixtures.
+
+Sets required env vars before app import so the app starts in tests; provides
+test client and clean DB per test.
 """
 
 import os
 import tempfile
 
 import pytest
+
 
 # Set required env vars before app or config are imported (config exits if unset).
 os.environ.setdefault("PXE_UBUNTU_KERNEL_URL", "http://pxe-pilot/vmlinuz")
