@@ -1,0 +1,28 @@
+# Excludes paths from the Docker build context. Reduces image size and build time,
+# and keeps secrets and local artifacts out of the image. Applied during docker build.
+
+# Virtual environments: recreated in the image from requirements; not needed in context.
+.venv
+env
+
+# Python bytecode and caches; regenerated at runtime in the container.
+__pycache__
+*.pyc
+
+# Local env and secrets; must not be baked into the image.
+.env
+
+# Version control and docs; not required to run the application in the image.
+.git
+*.md
+.dockerignore
+
+# Test and dev tooling; not needed in the production image.
+src/tests
+src/conftest.py
+src/pytest.ini
+src/pyproject.toml
+src/requirements-dev.txt
+src/.pytest_cache
+src/.coverage
+src/htmlcov
