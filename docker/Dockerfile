@@ -3,8 +3,10 @@
 
 # Stage 1: build iPXE and bake embed.ipxe into undionly.kpxe. That script tells the client to TFTP-load boot.ipxe; we generate boot.ipxe at runtime in entrypoint.sh.
 FROM debian:bookworm-slim AS ipxe
+# ca-certificates for git TLS; liblzma-dev for iPXE host build (util/zbin).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git binutils-dev \
+    ca-certificates \
+    build-essential git binutils-dev liblzma-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 https://git.ipxe.org/ipxe.git /ipxe
 COPY tftp/embed.ipxe /ipxe/src/embed.ipxe
