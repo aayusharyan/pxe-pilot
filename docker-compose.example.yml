@@ -1,0 +1,28 @@
+# Docker Compose file for the PXE HTTP API and optional in-container TFTP server.
+# For end users: pull the image; no repo clone needed.
+# For TFTP on host network: set PXE_TFTP_ENABLED=1, add network_mode: host, and remove ports (see README).
+
+services:
+  pxe-pilot:
+    image: ghcr.io/aayusharyan/pxe-pilot:latest
+    # HTTP API and TFTP (UDP). Omit when using network_mode: host for TFTP.
+    ports:
+      - "8000:8000"
+      - "69:69/udp"
+    # Persist SQLite DB and any TFTP assets under /data.
+    volumes:
+      - pxe-data:/data
+    # Required: kernel, initrd, autoinstall, and base URL. Optional vars below; uncomment to override.
+    environment:
+      PXE_UBUNTU_KERNEL_URL: http://image-host/ubuntu/vmlinuz
+      PXE_UBUNTU_INITRD_URL: http://image-host/ubuntu/initrd
+      PXE_AUTOINSTALL_URL: http://image-host/autoinstall.yaml
+      PXE_BASE_URL: http://pxe-pilot:8000
+      # DATABASE_PATH: /pxe.db
+      # ADMIN_API_KEY: your-secret-key
+      # PXE_TFTP_ENABLED: "0"
+    restart: unless-stopped
+
+# Named volume for /data; survives container recreation.
+volumes:
+  pxe-data:
