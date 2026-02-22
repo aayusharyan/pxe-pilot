@@ -5,12 +5,12 @@
 
 name: Build and Push Docker Image
 
-# Trigger this workflow only when code is pushed to the main branch.
-# This creates a 'nightly' Docker image for active development and testing.
+# Runs on push to main (nightly builds) and can also be triggered manually from the Actions tab.
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 # Global environment variables used throughout the workflow.
 # REGISTRY: The container registry URL where images will be pushed.
