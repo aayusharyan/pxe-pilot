@@ -1,0 +1,39 @@
+# Multi-stage build: stage 1 produces undionly.kpxe (iPXE with embedded script); stage 2 is the Flask app plus optional TFTP.
+# Build context is the repo root. Use: docker build -f docker/Dockerfile .
+
+# Stage 1: build iPXE and bake embed.ipxe into undionly.kpxe. That script tells the client to TFTP-load boot.ipxe; we generate boot.ipxe at runtime in entrypoint.sh.
+FROM debian:bookworm-slim AS ipxe
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git binutils-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 https://git.ipxe.org/ipxe.git /ipxe
+COPY tftp/embed.ipxe /ipxe/src/embed.ipxe
+WORKDIR /ipxe/src
+RUN make bin/undionly.kpxe EMBED=embed.ipxe
+
+# Stage 2: runtime image. Python app plus dnsmasq for optional TFTP. App and TFTP share the same container.
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY src/requirements.txt .
+RUN pip install --no-cache-dir --timeout 120 -r requirements.txt
+COPY src/app/ ./app/
+COPY src/run.py .
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# TFTP root: entrypoint writes boot.ipxe here when TFTP is enabled; we serve undionly.kpxe from the ipxe stage.
+RUN mkdir -p /tftpboot
+COPY --from=ipxe /ipxe/src/bin/undionly.kpxe /tftpboot/undionly.kpxe
+
+# Defaults; overridable via -e or .env. DATABASE_PATH default keeps container DB in a mountable path.
+ENV PORT=8000
+ENV DATABASE_PATH=/data/pxe.db
+
+EXPOSE 8000 69/udp
+
+VOLUME /data
+
+ENTRYPOINT ["/entrypoint.sh"]
