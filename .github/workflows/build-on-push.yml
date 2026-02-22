@@ -1,0 +1,91 @@
+# GitHub Actions workflow that automatically builds and publishes a Docker container image
+# to GitHub Container Registry (ghcr.io) whenever code is pushed to the main branch.
+# The resulting image is tagged as 'nightly' for active development builds.
+# Uses GitHub's built-in GITHUB_TOKEN for authentication - no manual token setup required.
+
+name: Build and Push Docker Image
+
+# Trigger this workflow only when code is pushed to the main branch.
+# This creates a 'nightly' Docker image for active development and testing.
+on:
+  push:
+    branches:
+      - main
+
+# Global environment variables used throughout the workflow.
+# REGISTRY: The container registry URL where images will be pushed.
+# IMAGE_NAME: Automatically set to the repository name (owner/repo format).
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    # Permissions granted to the auto-generated GITHUB_TOKEN for this job.
+    # contents:read allows checking out the repository code.
+    # packages:write allows pushing images to GitHub Container Registry.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Clone the repository code to the runner's workspace.
+      # Uses v4 of the checkout action for the latest features and security updates.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Configure Docker Buildx, which provides advanced build capabilities including
+      # multi-platform builds, build caching, and improved performance.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticate with GitHub Container Registry using the automatically provided token.
+      # github.actor is the username of the person or bot that triggered the workflow.
+      # GITHUB_TOKEN is automatically created by GitHub for each workflow run.
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generate Docker image metadata including tags and OCI-compliant labels.
+      # This step creates a 'nightly' tag for development builds. The metadata is used
+      # in subsequent build steps to properly tag and label the container image.
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=nightly
+
+      # Build the Docker image from ./docker/Dockerfile and push it to the registry.
+      # Implements GitHub Actions cache (type=gha) to speed up repeated builds by
+      # reusing layers. mode=max caches all intermediate layers for maximum performance.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Display the published image details in the GitHub Actions summary page.
+      # Provides a convenient pull command that users can copy and paste.
+      # The summary is visible when viewing the workflow run in GitHub's UI.
+      - name: Image details
+        run: |
+          echo "### Docker Image Published :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pull command:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
