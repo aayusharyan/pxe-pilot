@@ -43,7 +43,7 @@ docker run -d \
   -v pxe-data:/data \
   -e PXE_UBUNTU_KERNEL_URL=http://image-host/ubuntu/vmlinuz \
   -e PXE_UBUNTU_INITRD_URL=http://image-host/ubuntu/initrd \
-  -e PXE_AUTOINSTALL_URL=http://image-host/autoinstall.yaml \
+  -e PXE_AUTOINSTALL_URL=http://image-host/autoinstall/\${mac} \
   -e PXE_BASE_URL=http://pxe-pilot:8000 \
   ghcr.io/aayusharyan/pxe-pilot:latest
 ```
@@ -95,7 +95,7 @@ exit
 
 ## iPXE behaviour
 
-- **Reinstall:** Load kernel and initrd from configured URLs; boot with `autoinstall ds=nocloud-net;s=<autoinstall_url>`. Kernel, initrd, and autoinstall URLs all support `${mac}` and `${ip}` (replaced with client MAC and IP, URL-encoded).
+- **Reinstall:** Load kernel and initrd from configured URLs; boot with `autoinstall ds=nocloud-net;s=<autoinstall_url>`. The installer fetches `<autoinstall_url>/user-data` and `<autoinstall_url>/meta-data` (nocloud-net). Kernel, initrd, and autoinstall URLs all support `${mac}` and `${ip}` (replaced with client MAC and IP, URL-encoded).
 - **Local disk:** `sanboot --no-describe --drive 0x80`.
 
 ## Environment variables
