@@ -17,6 +17,7 @@ services:
     environment:
       PXE_UBUNTU_KERNEL_URL: http://image-host/ubuntu/vmlinuz
       PXE_UBUNTU_INITRD_URL: http://image-host/ubuntu/initrd
+      # Literal ${mac} for the container to substitute at runtime ($$ escapes $ in compose).
       PXE_AUTOINSTALL_URL: http://image-host/autoinstall/$${mac}
       PXE_BASE_URL: http://pxe-pilot:8000
       # DATABASE_PATH: pxe.db
