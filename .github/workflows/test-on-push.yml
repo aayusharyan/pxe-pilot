@@ -74,7 +74,7 @@ jobs:
           file: docker/Dockerfile
           push: false
           load: true
-          tags: pxe-boot:test
+          tags: pxe-pilot:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -88,7 +88,7 @@ jobs:
             -e PXE_UBUNTU_INITRD_URL=http://example.com/initrd \
             -e PXE_AUTOINSTALL_URL=http://example.com/autoinstall/\${mac} \
             -e PXE_TFTP_ENABLED=1 \
-            pxe-boot:test
+            pxe-pilot:test
 
       # Wait for TFTP and app to be ready; extra sleep so dnsmasq is listening on UDP 69.
       - name: Wait for container to be ready
