@@ -7,11 +7,14 @@ FROM debian:bookworm-slim AS ipxe
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     build-essential git binutils-dev liblzma-dev \
+    gcc-x86-64-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 https://git.ipxe.org/ipxe.git /ipxe
 COPY tftp/embed.ipxe /ipxe/src/embed.ipxe
 WORKDIR /ipxe/src
-RUN make bin/undionly.kpxe EMBED=embed.ipxe
+# Build legacy BIOS binary and UEFI binary in one pass so both are available in /tftpboot.
+RUN make bin/undionly.kpxe EMBED=embed.ipxe && \
+    make bin-x86_64-efi/ipxe.efi EMBED=embed.ipxe
 
 # Stage 2: runtime image. Python app plus dnsmasq for optional TFTP. App and TFTP share the same container.
 FROM python:3.11-slim
@@ -26,9 +29,12 @@ COPY src/run.py .
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# TFTP root: entrypoint writes boot.ipxe here when TFTP is enabled; we serve undionly.kpxe from the ipxe stage.
+# TFTP root: entrypoint writes boot.ipxe here when TFTP is enabled.
+# Both legacy BIOS (undionly.kpxe) and UEFI (ipxe.efi) binaries are served so
+# the router can send the correct filename based on client architecture.
 RUN mkdir -p /tftpboot
 COPY --from=ipxe /ipxe/src/bin/undionly.kpxe /tftpboot/undionly.kpxe
+COPY --from=ipxe /ipxe/src/bin-x86_64-efi/ipxe.efi /tftpboot/ipxe.efi
 
 # Defaults; overridable via -e or compose. App default for DATABASE_PATH is pxe.db (see config.py).
 ENV PORT=8000
