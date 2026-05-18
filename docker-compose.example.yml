@@ -20,7 +20,7 @@ services:
       # Literal ${mac} for the container to substitute at runtime ($$ escapes $ in compose).
       PXE_AUTOINSTALL_URL: http://image-host/autoinstall/$${mac}
       PXE_BASE_URL: http://pxe-pilot:8000
-      # DATABASE_PATH: pxe.db
+      # DATABASE_PATH: /data/pxe.db
       # ADMIN_API_KEY: your-secret-key
       # PXE_TFTP_ENABLED: "0"
     restart: unless-stopped
