@@ -1,7 +1,9 @@
 #!/bin/sh
 # Container entrypoint: optionally start TFTP (dnsmasq) when env is set, then run the Flask app with gunicorn.
-# TFTP is for routers that only offer "TFTP server + filename": we serve undionly.kpxe and a generated boot.ipxe
-# that chains to this app over HTTP. boot.ipxe is written at runtime so PXE_BASE_URL from .env can be used.
+# TFTP is for routers that only offer "TFTP server + filename": we serve the iPXE binaries and two generated
+# scripts - boot.ipxe (chained by embed.ipxe via ${next-server}) and autoexec.ipxe (iPXE's built-in fallback
+# when the embedded script fails, e.g. when the router doesn't populate ${next-server}/siaddr). Both scripts
+# chain to this app over HTTP. Written at runtime so PXE_BASE_URL from the environment is used.
 
 set -e
 
@@ -21,12 +23,16 @@ if [ -n "$PXE_TFTP_ENABLED" ]; then
   mkdir -p /tftpboot
   # Strip trailing slash so the chain URL is clean (e.g. http://pxe-pilot/chain).
   base="${PXE_BASE_URL%/}"
-  # boot.ipxe is what undionly.kpxe (embed.ipxe) chain-loads via TFTP. It tells the client to fetch the real script from this app over HTTP.
+  # boot.ipxe is chain-loaded by embed.ipxe via tftp://${next-server}/boot.ipxe and redirects to HTTP.
   printf '#!ipxe\nchain %s/chain\n' "$base" > /tftpboot/boot.ipxe
+  # autoexec.ipxe is iPXE's built-in fallback: when the embedded script can't resolve ${next-server}
+  # (e.g. the router sets option 66 but not siaddr), iPXE requests this file via TFTP automatically.
+  printf '#!ipxe\nchain %s/chain\n' "$base" > /tftpboot/autoexec.ipxe
   # Run dnsmasq as TFTP server: no DHCP (-p 0), TFTP on default port, serve files from /tftpboot. Run in background so gunicorn can start.
   dnsmasq --no-daemon -p 0 --enable-tftp --tftp-root=/tftpboot --user=root &
 fi
 
 # Start the Flask app. Single worker is enough for typical homelab use; app:app is the WSGI callable.
+# --access-logfile - writes HTTP request logs to stdout so docker logs captures them.
 # PORT is optional (default 8000); see README Environment variables.
-exec gunicorn -b "0.0.0.0:${PORT:-8000}" -w 1 app:app
+exec gunicorn -b "0.0.0.0:${PORT:-8000}" -w 1 --access-logfile - app:app
