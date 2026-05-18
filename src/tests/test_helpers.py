@@ -38,3 +38,10 @@ def test_resolve_url_template_replaces_mac_and_ip():
     out = resolve_url_template(url, "aa:bb:cc:dd:ee:ff", "192.168.1.1")
     assert "aa%3Abb%3Acc%3Add%3Aee%3Aff" in out or "aa:bb:cc:dd:ee:ff" in out
     assert "192.168.1.1" in out
+
+
+def test_resolve_url_template_mac_hyphen():
+    """${mac_hyphen} is replaced with hyphen-separated lowercase MAC (no URL encoding needed)."""
+    url = "http://pxe-image-host/autoinstall/${mac_hyphen}"
+    out = resolve_url_template(url, "aa:bb:cc:dd:ee:ff", "192.168.1.1")
+    assert out == "http://pxe-image-host/autoinstall/aa-bb-cc-dd-ee-ff"
