@@ -1,7 +1,13 @@
 #!ipxe
-# Stage 1 (build time): baked into undionly.kpxe. Does not reference the HTTP app.
-# Client has just loaded this binary via TFTP; we only tell it to TFTP-load boot.ipxe from the same server.
-# boot.ipxe is generated at container startup (entrypoint.sh) and contains the HTTP /chain URL.
-# ${next-server} is set by DHCP option 66 (router "TFTP Server" / siaddr); same host as this container.
+# Stage 1 (build time): baked into both undionly.kpxe and ipxe.efi.
+# Explicit dhcp is required: without it, the embedded script may run before iPXE's network
+# stack is fully configured (TFTP was handled by the UEFI firmware, not iPXE), causing
+# "Network unreachable" on the TFTP chain even though the initial TFTP worked. After dhcp,
+# iPXE has a valid IP, subnet mask, and gateway.
+#
+# boot.ipxe is generated at container startup by the entrypoint using PXE_BASE_URL, so it
+# always contains the correct HTTP target for the deployment. This two-stage TFTP approach
+# avoids hardcoding any IP into the binary. Falls back to local disk on failure.
 
-chain tftp://${next-server}/boot.ipxe
+dhcp
+chain tftp://${next-server}/boot.ipxe || sanboot --no-describe --drive 0x80
