@@ -44,6 +44,6 @@ EXPOSE 8000 69/udp
 VOLUME /data
 
 # Set by the release workflow when creating a new version.
-LABEL version="1.3.0"
+LABEL version="1.4.0"
 
 ENTRYPOINT ["/entrypoint.sh"]
