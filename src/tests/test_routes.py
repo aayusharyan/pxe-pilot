@@ -66,14 +66,18 @@ def test_boot_normalizes_mac_formats(client):
     assert "aa:bb:cc:dd:ee:ff" in macs
 
 
-def test_boot_with_reinstall_true_returns_kernel_script(client):
-    """When node has reinstall=True, GET /boot returns Ubuntu installer iPXE script."""
+def test_boot_with_reinstall_true_returns_uki_script(client):
+    """When node has reinstall=True, GET /boot returns Ubuntu UKI iPXE script."""
     mac = "11:22:33:44:55:66"
     client.post(f"/nodes/{mac}/reinstall")
     r = client.get("/boot", query_string={"mac": mac})
     assert r.status_code == 200
     body = r.get_data(as_text=True)
-    assert "kernel" in body and "initrd" in body and "autoinstall" in body
+    assert body.startswith("#!ipxe")
+    assert "imgfree" in body
+    assert "chain" in body and "uki.efi" in body
+    assert "autoinstall" in body and "ds=nocloud-net" in body
+    assert "ip=dhcp" in body
 
 
 def test_list_nodes_empty(client):
