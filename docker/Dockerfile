@@ -20,18 +20,18 @@ WORKDIR /ipxe/src
 RUN make bin/undionly.kpxe EMBED=embed.ipxe && \
     make bin-x86_64-efi/ipxe.efi EMBED=embed.ipxe
 
-# Stage 2: build the UKI (Unified Kernel Image) — a single PE/EFI binary that
+# Stage 2: build the UKI (Unified Kernel Image) - a single PE/EFI binary that
 # bundles the Ubuntu netboot kernel, netboot initrd, an os-release blurb, and a
 # fallback kernel cmdline. The UKI works around two firmware-era bugs on old HP
 # OEM UEFI (~2012–2014) that broke the earlier "iPXE → kernel + initrd" flow:
-#   1. EFI_LOAD_FILE2_PROTOCOL initrd handoff bug — kernel never sees the
+#   1. EFI_LOAD_FILE2_PROTOCOL initrd handoff bug - kernel never sees the
 #      initrd loaded by iPXE/EFI, then panics with "VFS: Cannot open root device".
 #   2. Kernel cmdline truncation/loss across EFI hand-off.
 # systemd-stub bundles kernel + initrd + cmdline into one signed PE binary that
 # firmware loads like any normal EFI app, sidestepping both protocol bugs.
 #
 # At runtime iPXE chains to uki.efi over TFTP and passes the real autoinstall
-# cmdline as chain arguments — iPXE concatenates the image name with extra args
+# cmdline as chain arguments - iPXE concatenates the image name with extra args
 # and sets the result as EFI LoadOptions. systemd-stub uses LoadOptions when
 # non-empty (it does NOT append), so the embedded .cmdline below is only a
 # fallback for direct firmware boots without iPXE. See app/routes/boot.py for
