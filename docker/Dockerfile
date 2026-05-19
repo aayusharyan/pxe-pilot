@@ -101,9 +101,9 @@ RUN chmod +x /entrypoint.sh
 # TFTP root: entrypoint writes boot.ipxe here when TFTP is enabled.
 # Three binaries are served so the router can send the correct one per architecture
 # and the per-MAC iPXE script can chain to the UKI for the install flow:
-#   undionly.kpxe — legacy BIOS clients
-#   ipxe.efi      — UEFI clients (chains to http://pxe-pilot-http/chain via embed.ipxe)
-#   uki.efi       — Unified Kernel Image chained to by the per-MAC reinstall script
+#   undionly.kpxe - legacy BIOS clients
+#   ipxe.efi      - UEFI clients (chains to http://pxe-pilot-http/chain via embed.ipxe)
+#   uki.efi       - Unified Kernel Image chained to by the per-MAC reinstall script
 RUN mkdir -p /tftpboot
 COPY --from=ipxe /ipxe/src/bin/undionly.kpxe /tftpboot/undionly.kpxe
 COPY --from=ipxe /ipxe/src/bin-x86_64-efi/ipxe.efi /tftpboot/ipxe.efi
