@@ -23,6 +23,8 @@ services:
       # DATABASE_PATH: /data/pxe.db
       # ADMIN_API_KEY: your-secret-key
       # PXE_TFTP_ENABLED: "0"
+      # IANA timezone used to render timestamps (storage stays UTC). Default UTC.
+      # TIMEZONE: Asia/Tokyo
     restart: unless-stopped
 
 # Named volume for /data; survives container recreation.
