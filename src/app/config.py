@@ -8,6 +8,7 @@ Optional variables use _get() with a default. All values are stripped of whitesp
 
 import os
 import sys
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 def _get(key: str, default: str = "") -> str:
     """
@@ -57,3 +58,18 @@ DATABASE_PATH = _get("DATABASE_PATH", "pxe.db")
 # When set, admin routes require Authorization: Bearer <key>. If unset, those
 # routes are unprotected (not recommended in production).
 ADMIN_API_KEY = _get("ADMIN_API_KEY", "")
+
+# IANA timezone name used to serialise timestamps in API responses. Internal
+# storage stays UTC; this only controls the offset shown to clients (e.g.
+# "Asia/Tokyo" yields "+09:00"). Default UTC. Fail fast on a bad name so an
+# operator typo surfaces at boot instead of producing wrong wire data later.
+_TIMEZONE_NAME = _get("TIMEZONE", "UTC")
+try:
+    TIMEZONE = ZoneInfo(_TIMEZONE_NAME)
+except ZoneInfoNotFoundError:
+    print(
+        f"Fatal: TIMEZONE={_TIMEZONE_NAME!r} is not a known IANA name. "
+        "Install tzdata or pick a valid zone (e.g. UTC, Asia/Tokyo).",
+        file=sys.stderr,
+    )
+    sys.exit(1)
