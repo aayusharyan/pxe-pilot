@@ -3,7 +3,11 @@ Tests for HTTP endpoints and route helpers: /health, /chain, /boot, /nodes,
 reinstall toggles, and admin auth. Uses fixtures from conftest (client, reset_db).
 """
 
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 import pytest
+from sqlalchemy.exc import StatementError
 
 
 def test_health_returns_ok(client):
@@ -148,6 +152,120 @@ def test_admin_auth_required_when_key_set(client, monkeypatch):
 
     r3 = client.get("/nodes", headers={"Authorization": "Bearer secret"})
     assert r3.status_code == 200
+
+
+def test_column_round_trips_tz_aware_utc(client):
+    """
+    Every read from a UTCDateTime column must come back tz-aware in UTC.
+    Guards regressions where the column type silently reverts to plain
+    DateTime (which strips tzinfo on SQLite).
+    """
+    from app.db import get_db
+    from app.models import Node
+
+    client.get("/boot", query_string={"mac": "aa:bb:cc:dd:ee:ff"})
+
+    db = next(get_db())
+    try:
+        node = db.query(Node).filter(Node.mac == "aa:bb:cc:dd:ee:ff").first()
+        assert node is not None
+        for label, value in [("created_at", node.created_at), ("last_seen", node.last_seen)]:
+            assert value is not None, f"{label} unexpectedly None"
+            assert value.tzinfo is not None, f"{label} must be tz-aware on read"
+            assert value.utcoffset().total_seconds() == 0, f"{label} must be UTC, got {value.utcoffset()}"
+    finally:
+        db.close()
+
+
+def test_column_normalises_non_utc_input_to_utc(client):
+    """
+    Writing a tz-aware datetime in any offset (e.g. +09:00) must land as
+    UTC in storage, preserving the underlying instant. This is what makes
+    "store UTC, display in TIMEZONE" actually true regardless of how the
+    caller constructed the datetime.
+    """
+    from app.db import get_db
+    from app.models import Node
+
+    client.get("/boot", query_string={"mac": "aa:bb:cc:dd:ee:ff"})
+
+    jst = timezone(timedelta(hours=9))
+    # Pick a fixed wall-clock instant in JST; the same instant in UTC is
+    # 9 hours earlier - that's what the row should contain after the
+    # round-trip.
+    jst_value = datetime(2026, 5, 22, 8, 0, 0, tzinfo=jst)
+    expected_utc = datetime(2026, 5, 21, 23, 0, 0, tzinfo=timezone.utc)
+
+    db = next(get_db())
+    try:
+        node = db.query(Node).filter(Node.mac == "aa:bb:cc:dd:ee:ff").first()
+        node.last_seen = jst_value
+        db.commit()
+        db.refresh(node)
+        assert node.last_seen == expected_utc, f"got {node.last_seen!r}, want {expected_utc!r}"
+        assert node.last_seen.utcoffset().total_seconds() == 0
+    finally:
+        db.close()
+
+
+def test_column_rejects_naive_datetime(client):
+    """
+    Assigning a naive datetime to a UTCDateTime column must raise on
+    commit (SQLAlchemy wraps the decorator's ValueError in StatementError).
+    Forces every writer to be explicit about offset.
+    """
+    from app.db import get_db
+    from app.models import Node
+
+    client.get("/boot", query_string={"mac": "aa:bb:cc:dd:ee:ff"})
+
+    db = next(get_db())
+    try:
+        node = db.query(Node).filter(Node.mac == "aa:bb:cc:dd:ee:ff").first()
+        node.last_seen = datetime.now()  # naive on purpose
+        with pytest.raises(StatementError) as exc:
+            db.commit()
+        assert "naive datetime" in str(exc.value), exc.value
+        db.rollback()
+    finally:
+        db.close()
+
+
+def test_timestamps_default_utc_offset(client):
+    """
+    With TIMEZONE unset (default UTC), serialised timestamps must carry an
+    explicit +00:00 offset and be parseable by datetime.fromisoformat. Guards
+    the regression where SQLite-stripped tzinfo produced naive ISO strings.
+    """
+    client.get("/boot", query_string={"mac": "aa:bb:cc:dd:ee:ff"})
+    nodes = client.get("/nodes").get_json()["nodes"]
+    assert len(nodes) == 1
+    created = nodes[0]["created_at"]
+    last_seen = nodes[0]["last_seen"]
+    assert created.endswith("+00:00"), created
+    assert last_seen.endswith("+00:00"), last_seen
+    parsed = datetime.fromisoformat(created)
+    assert parsed.utcoffset().total_seconds() == 0
+
+
+def test_timestamps_use_configured_timezone(client, monkeypatch):
+    """
+    Monkeypatching app.models.TIMEZONE to Asia/Tokyo flips the serialised
+    offset to +09:00 while preserving the underlying UTC instant - i.e. the
+    same row is just rendered with a different offset, not shifted in time.
+    """
+    import app.models as models
+
+    monkeypatch.setattr(models, "TIMEZONE", ZoneInfo("Asia/Tokyo"))
+
+    client.get("/boot", query_string={"mac": "aa:bb:cc:dd:ee:ff"})
+    nodes = client.get("/nodes").get_json()["nodes"]
+    created = nodes[0]["created_at"]
+    assert created.endswith("+09:00"), created
+    # The instant should match the wall-clock now() within a generous skew.
+    now_utc = datetime.now(tz=ZoneInfo("UTC"))
+    delta = abs((now_utc - datetime.fromisoformat(created)).total_seconds())
+    assert delta < 30, f"timestamp drift {delta}s suggests TZ conversion changed the instant"
 
 
 def test_admin_auth_post_delete_reinstall_required(client, monkeypatch):
