@@ -86,8 +86,10 @@ RUN cd /uki && \
       stub.efi uki.efi
 
 # Stage 3: runtime image. Python app plus dnsmasq for optional TFTP. App and TFTP share the same container.
+# tzdata populates /usr/share/zoneinfo so zoneinfo.ZoneInfo(<IANA name>) resolves at runtime;
+# without it the TIMEZONE env var (see app/config.py) would fail-fast on any non-UTC value.
 FROM python:3.11-slim
-RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq \
+RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -110,9 +112,11 @@ COPY --from=ipxe /ipxe/src/bin-x86_64-efi/ipxe.efi /tftpboot/ipxe.efi
 COPY --from=uki  /uki/uki.efi /tftpboot/uki.efi
 
 # Defaults; overridable via -e or compose. DATABASE_PATH points into the declared volume so
-# the DB survives container recreation. PORT is the gunicorn bind port.
+# the DB survives container recreation. PORT is the gunicorn bind port. TIMEZONE controls the
+# offset embedded in serialised timestamps (storage stays UTC); override to e.g. Asia/Tokyo.
 ENV PORT=8000
 ENV DATABASE_PATH=/data/pxe.db
+ENV TIMEZONE=UTC
 
 EXPOSE 8000 69/udp
 
