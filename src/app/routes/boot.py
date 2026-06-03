@@ -111,10 +111,13 @@ def ipxe_script_reinstall(mac: str, client_ip: str) -> str:
 
 def ipxe_script_local_disk() -> str:
     """
-    iPXE script that boots from the first local disk (BIOS drive 0x80)
-    instead of the network installer.
+    iPXE script that boots from the first local disk instead of the network installer.
+    sanboot 0x80 is tried first; on UEFI machines where 0x80 is absent or maps to an
+    empty slot (e.g. an unpopulated M.2 before the SATA OS drive), sanboot fails and
+    the || exit fallback causes iPXE to return cleanly to the UEFI Boot Manager, which
+    then advances to the next entry in BootOrder (the OS EFI boot entry).
     """
-    return "#!ipxe\nsanboot --no-describe --drive 0x80\n"
+    return "#!ipxe\nsanboot --no-describe --drive 0x80 || exit\n"
 
 
 def register_boot_route(app):
