@@ -1,0 +1,18 @@
+# Example seed file for pxe-pilot. Copy to seed.yml, fill in your MACs,
+# mount as read-only, and set SEED_FILE: /config/seed.yml in docker-compose.
+#
+# Applied on startup for any MAC not already in the database.
+# Existing rows are never modified - the database always takes priority.
+
+nodes:
+  - mac: "aa:bb:cc:dd:ee:ff"
+    reinstall: false
+    local_boot_script: "sanboot --no-describe --drive 0x80"
+
+  - mac: "11:22:33:44:55:66"
+    reinstall: false
+    # local_boot_script omitted: node will use "exit" (hands control back to UEFI firmware)
+
+  - mac: "de:ad:be:ef:00:11"
+    reinstall: true
+    # Node will PXE-boot into the installer on next boot
