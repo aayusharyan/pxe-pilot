@@ -25,6 +25,10 @@ services:
       # PXE_TFTP_ENABLED: "0"
       # IANA timezone used to render timestamps (storage stays UTC). Default UTC.
       # TIMEZONE: Asia/Tokyo
+      # Path to a seed YAML that populates missing nodes on startup. Mount the file
+      # as a read-only volume (see volumes: block) and point SEED_FILE at it.
+      # Only inserts MACs not already in the DB; existing rows are never changed.
+      # SEED_FILE: /config/seed.yml
     restart: unless-stopped
 
 # Named volume for /data; survives container recreation.
