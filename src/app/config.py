@@ -55,6 +55,11 @@ PXE_UKI_URL = _get("PXE_UKI_URL", "tftp://${next-server}/uki.efi")
 # Path to the SQLite database file. Default is pxe.db in the current directory.
 DATABASE_PATH = _get("DATABASE_PATH", "pxe.db")
 
+# Optional path to a YAML seed file that defines the initial default node state.
+# Applied once at startup for any MAC not yet in the database; existing rows are
+# never modified (the DB always takes priority over the seed). Unset means no seed.
+SEED_FILE = _get("SEED_FILE", "")
+
 # When set, admin routes require Authorization: Bearer <key>. If unset, those
 # routes are unprotected (not recommended in production).
 ADMIN_API_KEY = _get("ADMIN_API_KEY", "")
