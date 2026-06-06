@@ -1,6 +1,6 @@
 """
 /nodes routes: list nodes (GET), set/clear reinstall (POST/DELETE), set/clear
-per-node local boot script (PUT/DELETE on .../local-boot). Admin-only when
+per-node local boot script (PUT/DELETE on .../local-boot-config). Admin-only when
 ADMIN_API_KEY is set. MAC in path is normalized; node is created if missing.
 """
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def register_nodes_routes(app):
     """
     Register GET /nodes, POST /nodes/<mac>/reinstall, DELETE /nodes/<mac>/reinstall,
-    PUT /nodes/<mac>/local-boot, DELETE /nodes/<mac>/local-boot.
+    PUT /nodes/<mac>/local-boot-config, DELETE /nodes/<mac>/local-boot-config.
     Each handler checks admin auth and uses one DB session per request.
     """
 
@@ -95,7 +95,7 @@ def register_nodes_routes(app):
         finally:
             db.close()
 
-    @app.route("/nodes/<path:mac_raw>/local-boot", methods=["PUT"])
+    @app.route("/nodes/<path:mac_raw>/local-boot-config", methods=["PUT"])
     def set_local_boot(mac_raw: str):
         """
         Set a per-node iPXE local boot command. Body must be JSON with a
@@ -147,7 +147,7 @@ def register_nodes_routes(app):
         finally:
             db.close()
 
-    @app.route("/nodes/<path:mac_raw>/local-boot", methods=["DELETE"])
+    @app.route("/nodes/<path:mac_raw>/local-boot-config", methods=["DELETE"])
     def clear_local_boot(mac_raw: str):
         """
         Reset the per-node local boot script to None (falls back to "exit").
