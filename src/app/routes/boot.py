@@ -1,9 +1,12 @@
 """
 /boot route: iPXE entrypoint per MAC. Normalizes MAC, upserts node (create with
 reinstall=False if new), updates last_seen, then returns reinstall or local-disk script.
+validate_local_boot_script() is exported for use by the nodes route when a
+caller sets a per-node local boot command via PUT /nodes/<mac>/local-boot.
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 from urllib.parse import quote
 
@@ -109,16 +112,75 @@ def ipxe_script_reinstall(mac: str, client_ip: str) -> str:
     )
 
 
-def ipxe_script_local_disk() -> str:
+def validate_local_boot_script(script: str) -> bool:
     """
-    iPXE script that returns control to the UEFI Boot Manager, which then
-    advances to the next entry in BootOrder (the OS EFI boot entry installed
-    by GRUB). Pure exit is correct for all UEFI machines; sanboot --drive 0x80
-    was removed because on machines with a 0-byte dummy block device enumerated
-    as sda, sanboot 0x80 targets that empty slot and returns 'Reset System'
-    instead of failing cleanly, so the || exit fallback never fires.
+    Return True when script is a safe, recognised iPXE local-boot command.
+
+    Allowed forms:
+      - "exit"                              (return control to UEFI firmware)
+      - "sanboot [flags]"                   (directly boot a local or SAN disk)
+
+    For sanboot the accepted flags are:
+      --no-describe          suppress iBFT table generation
+      --keep                 don't detach the SAN drive on failure
+      --drive      <value>   0x80..0xff (BIOS drive number) or 0..255 decimal (UEFI)
+      --filename   <path>    Windows EFI path, e.g. \\EFI\\ubuntu\\grubx64.efi
+      --extra      <path>    same format; selects partition containing this path
+      --label      <text>    volume label (alphanumeric, spaces, hyphens, underscores)
+      --uuid       <guid>    GPT partition GUID
+
+    Unknown tokens or anything other than-1- "exit" / "sanboot" are rejected to
+    prevent arbitrary iPXE code injection via the API.
     """
-    return "#!ipxe\nexit\n"
+    if script == "exit":
+        return True
+
+    parts = script.split()
+    if not parts or parts[0] != "sanboot":
+        return False
+
+    # Flags that stand alone (no following value).
+    standalone_flags = {"--no-describe", "--keep"}
+    # Flags that take one following argument; each maps to a validation pattern.
+    arg_flags = {
+        "--drive": re.compile(r"^(?:0x[0-9a-fA-F]{1,2}|[0-9]{1,3})$"),
+        "--filename": re.compile(r"^\\[A-Za-z0-9\\._\-]{1,127}$"),
+        "--extra": re.compile(r"^\\[A-Za-z0-9\\._\-]{1,127}$"),
+        "--label": re.compile(r"^[A-Za-z0-9][A-Za-z0-9_ \-]{0,30}$"),
+        "--uuid": re.compile(
+            r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$"
+        ),
+    }
+
+    i = 1
+    while i < len(parts):
+        token = parts[i]
+        if token in standalone_flags:
+            i += 1
+        elif token in arg_flags:
+            if i + 1 >= len(parts):
+                return False  # flag with no value
+            if not arg_flags[token].match(parts[i + 1]):
+                return False  # value failed format check
+            i += 2
+        else:
+            return False  # unknown token
+
+    return True
+
+
+def ipxe_script_local_disk(local_boot_script: str | None) -> str:
+    """
+    Build the iPXE script served to a node that does not need reinstalling.
+
+    When local_boot_script is None (default), returns a plain "exit" so the
+    UEFI Boot Manager advances to the next BootOrder entry (the OS). When a
+    per-node script is set (e.g. "sanboot --no-describe --drive 0x80"), that
+    command is used instead - useful on firmware where a clean "exit" stalls
+    at a boot menu or on legacy BIOS machines that need an explicit drive target.
+    """
+    cmd = local_boot_script if local_boot_script is not None else "exit"
+    return f"#!ipxe\n{cmd}\n"
 
 
 def register_boot_route(app):
@@ -151,7 +213,7 @@ def register_boot_route(app):
                 client_ip = get_client_ip()
                 body = ipxe_script_reinstall(mac, client_ip)
             else:
-                body = ipxe_script_local_disk()
+                body = ipxe_script_local_disk(node.local_boot_script)
             return Response(body, status=200, mimetype="text/plain")
         finally:
             db.close()
