@@ -3,10 +3,13 @@ SQLAlchemy ORM models for the app.
 
 Defines Base (declarative base for all models) and Node. Each Node row is one
 machine identified by MAC; the reinstall flag tells /boot whether to serve the
-Ubuntu installer script or a local-disk boot script.
+Ubuntu installer script or a local-disk boot script. local_boot_script stores
+an optional per-node iPXE command used when reinstall is false; when null, the
+default "exit" script is returned.
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Integer, String, TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -78,10 +81,24 @@ def _iso(d: datetime | None) -> str | None:
     return d.astimezone(TIMEZONE).isoformat()
 
 
+class AppConfig(Base):
+    """
+    Generic key/value configuration store. Used by the application to persist
+    runtime flags across restarts (e.g. is_seed_executed=1 to prevent the seed
+    from re-running after intentional node deletions).
+    """
+    __tablename__ = "app_config"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False)
+    value: Mapped[str] = mapped_column(String(256), nullable=False)
+
+
 class Node(Base):
     """
     One machine known by its MAC address. reinstall toggles installer vs local
     boot; last_seen is updated on each /boot; created_at is set on insert.
+    local_boot_script stores the per-node iPXE command used for local disk boot
+    (e.g. "sanboot --no-describe --drive 0x80"); null means fall back to "exit".
 
     Datetime columns use the UTCDateTime decorator so values are stored as UTC
     on every backend and read back tz-aware, regardless of whether the
@@ -92,18 +109,21 @@ class Node(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     mac: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
     reinstall: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    local_boot_script: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, default=None)
     last_seen: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     def to_dict(self) -> dict:
         """
-        Return a JSON-serializable dict of this node (mac, reinstall, last_seen,
-        created_at). Datetimes are ISO 8601 strings with an explicit offset
-        (per TIMEZONE) so clients can parse them without guessing.
+        Return a JSON-serializable dict of this node (mac, reinstall,
+        local_boot_script, last_seen, created_at). Datetimes are ISO 8601
+        strings with an explicit offset (per TIMEZONE) so clients can parse
+        them without guessing.
         """
         return {
             "mac": self.mac,
             "reinstall": self.reinstall,
+            "local_boot_script": self.local_boot_script,
             "last_seen": _iso(self.last_seen),
             "created_at": _iso(self.created_at),
         }
