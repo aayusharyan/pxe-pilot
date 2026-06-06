@@ -98,16 +98,18 @@ For development setup, see [Contributing](CONTRIBUTING.md).
 
 ## Endpoints
 
-| Method | Path                     | Description                                                                                                                      |
-| ------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/chain`                 | iPXE bootstrap: chain to `/boot?mac=${mac}`; on failure, exit so BIOS continues with next boot device. Point DHCP filename here. |
-| GET    | `/boot?mac=...`          | iPXE script: reinstall or local disk. Creates/updates node; updates last_seen.                                                   |
-| GET    | `/nodes`                 | JSON list of nodes (MAC, reinstall, last_seen, created_at).                                                                      |
-| POST   | `/nodes/<mac>/reinstall` | Set reinstall=true for MAC.                                                                                                      |
-| DELETE | `/nodes/<mac>/reinstall` | Set reinstall=false for MAC.                                                                                                     |
-| GET    | `/health`                | `{"status":"OK"}`.                                                                                                               |
+| Method | Path                             | Description                                                                                                                      |
+| ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/chain`                         | iPXE bootstrap: chain to `/boot?mac=${mac}`; on failure, exit so BIOS continues with next boot device. Point DHCP filename here. |
+| GET    | `/boot?mac=...`                  | iPXE script: reinstall or local disk. Creates/updates node; updates last_seen.                                                   |
+| GET    | `/nodes`                         | JSON list of nodes (MAC, reinstall, local_boot_script, last_seen, created_at).                                                   |
+| POST   | `/nodes/<mac>/reinstall`         | Set reinstall=true for MAC.                                                                                                      |
+| DELETE | `/nodes/<mac>/reinstall`         | Set reinstall=false for MAC.                                                                                                     |
+| PUT    | `/nodes/<mac>/local-boot-config` | Set per-node local boot script. Body: `{"script": "sanboot --no-describe --drive 0x80"}`. See below.                             |
+| DELETE | `/nodes/<mac>/local-boot-config` | Clear per-node local boot script (resets to default `exit`).                                                                     |
+| GET    | `/health`                        | `{"status":"OK"}`.                                                                                                               |
 
-MAC: colon or hyphen separated; stored as lowercase colon (e.g. `aa:bb:cc:dd:ee:ff`). Boot and chain are unauthenticated. For `/nodes` and reinstall endpoints you can set `ADMIN_API_KEY` and send `Authorization: Bearer <key>` (see [SECURITY.md](SECURITY.md)).
+MAC: colon or hyphen separated; stored as lowercase colon (e.g. `aa:bb:cc:dd:ee:ff`). Boot and chain are unauthenticated. For `/nodes` and reinstall/local-boot-config endpoints you can set `ADMIN_API_KEY` and send `Authorization: Bearer <key>` (see [SECURITY.md](SECURITY.md)).
 
 ## How PXE boot works
 
@@ -146,11 +148,62 @@ exit
 
   The script also runs `imgfree` before `chain` to clear any previously loaded image. Without it, `systemd-stub` trips on a stale `EFI_LOAD_FILE2_PROTOCOL` registration from iPXE and refuses to start with `Error registering initrd: Already started`.
 
-- **Local disk:** `sanboot --no-describe --drive 0x80`.
+- **Local disk:** `exit` by default (returns control to UEFI; firmware advances to the next BootOrder entry - the OS). Override per node with `PUT /nodes/<mac>/local-boot-config` when your firmware does not cleanly advance on `exit` or when you need to explicitly target a specific disk.
+
+  Accepted `script` values for `PUT /nodes/<mac>/local-boot-config`:
+
+  | Value                                                                | When to use                                                    |
+  | -------------------------------------------------------------------- | -------------------------------------------------------------- |
+  | `exit`                                                               | Default; UEFI firmware advances to next boot entry (Ubuntu)    |
+  | `sanboot --no-describe --drive 0x80`                                 | Legacy BIOS - first hard disk (traditional INT 13h drive 0x80) |
+  | `sanboot --no-describe --drive 0`                                    | UEFI - first detected disk by PCI BDF ordering                 |
+  | `sanboot --no-describe --drive 1`                                    | UEFI - second detected disk (e.g. when sda is a dummy or USB)  |
+  | `sanboot --no-describe --drive 0 --filename \EFI\ubuntu\grubx64.efi` | UEFI - explicit bootloader path (needed on RHEL/older distros) |
+  | `sanboot --no-describe --drive 0 --extra \EFI\ubuntu`                | UEFI - select partition that contains this path                |
+  | `sanboot --no-describe --drive 0 --label Ubuntu`                     | UEFI - select partition by volume label                        |
+
+  The `--no-describe` flag prevents iPXE from writing an iBFT table for a local disk, which is always correct here. For UEFI machines omit `--drive` for `sanboot` entirely (or use `--drive 0`) since BIOS drive numbers (0x80, 0x81) are not valid in the UEFI disk namespace; use decimal indices instead. To clear a per-node override and revert to `exit`, send `DELETE /nodes/<mac>/local-boot-config`.
 
 ## Environment variables
 
 Set these in the compose file's `environment` block (or with `-e` for Plain Docker). The compose file you download is the reference for names and example values.
 
 - **Required:** `PXE_UBUNTU_KERNEL_URL`, `PXE_UBUNTU_INITRD_URL`, `PXE_AUTOINSTALL_URL`, `PXE_BASE_URL`
-- **Optional:** `PXE_UBUNTU_ISO_URL` (URL to the Ubuntu live-server ISO; required for Ubuntu 24.04 casper boot), `PXE_UKI_URL` (where iPXE chains the UKI from; default `tftp://${next-server}/uki.efi`, override when DHCP siaddr is not populated - e.g. some Unifi setups), `DATABASE_PATH` (default: pxe.db), `PXE_TFTP_ENABLED` (1/true/yes to run TFTP in container), `PORT`, `ADMIN_API_KEY`, `TIMEZONE` (IANA name used to render `last_seen`/`created_at` in API responses; storage stays UTC; default `UTC`; e.g. `Asia/Tokyo` yields `+09:00`; invalid name aborts startup)
+- **Optional:** `PXE_UBUNTU_ISO_URL` (URL to the Ubuntu live-server ISO; required for Ubuntu 24.04 casper boot), `PXE_UKI_URL` (where iPXE chains the UKI from; default `tftp://${next-server}/uki.efi`, override when DHCP siaddr is not populated - e.g. some Unifi setups), `DATABASE_PATH` (default: pxe.db), `PXE_TFTP_ENABLED` (1/true/yes to run TFTP in container), `PORT`, `ADMIN_API_KEY`, `TIMEZONE` (IANA name used to render `last_seen`/`created_at` in API responses; storage stays UTC; default `UTC`; e.g. `Asia/Tokyo` yields `+09:00`; invalid name aborts startup), `SEED_FILE` (path to a YAML file that seeds the initial default node state - see below)
+
+## Seed file (SEED_FILE)
+
+Mount a YAML file into the container and point `SEED_FILE` at it to define the default state for any node that is not yet in the database. At every startup the server reads the file and inserts listed MACs that are absent; nodes that already exist in the database are **never** modified (the DB always wins). This is the intended recovery path after a full database wipe - rebuild the container, the seed repopulates the known nodes, and the server is immediately in the right state.
+
+Example `/config/seed.yml`:
+
+```yaml
+nodes:
+  - mac: "3c:52:82:57:ac:ed"
+    reinstall: false
+    local_boot_script: "sanboot --no-describe --drive 0x80"
+  - mac: "40:b0:34:43:b5:e7"
+    reinstall: false
+    # local_boot_script omitted: boots via "exit" (hands control back to UEFI)
+  - mac: "40:b0:34:45:4e:0e"
+    reinstall: true
+```
+
+**Fields per entry:**
+
+| Field               | Required | Default | Notes                                                                                                                                                                            |
+| ------------------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mac`               | yes      | -       | Colon, hyphen, or no-separator format; stored as `aa:bb:cc:dd:ee:ff`. Invalid MACs are skipped.                                                                                  |
+| `reinstall`         | no       | `false` | `true` flags the node for OS reinstall on its next boot.                                                                                                                         |
+| `local_boot_script` | no       | `null`  | iPXE command for local disk boot (same values accepted by `PUT /nodes/<mac>/local-boot-config`). Invalid scripts are logged and ignored; the node is still inserted with `null`. |
+
+In `docker-compose.yml`:
+
+```yaml
+services:
+  pxe-pilot:
+    environment:
+      SEED_FILE: /config/seed.yml
+    volumes:
+      - ./seed.yml:/config/seed.yml:ro
+```
