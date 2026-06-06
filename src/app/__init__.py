@@ -11,8 +11,9 @@ import logging
 from flask import Flask
 
 from app.config import ADMIN_API_KEY
-from app.db import init_db
+from app.db import init_db, migrate_db
 from app.routes import register_routes
+from app.seed import seed_db
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ def create_app() -> Flask:
             "ADMIN_API_KEY is not set; admin endpoints (/nodes, .../reinstall) are unprotected. This is less secure."
         )
     init_db()
+    migrate_db()
+    seed_db()
     register_routes(app)
     return app
 
